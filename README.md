@@ -107,7 +107,7 @@ Demonstrates end‑to‑end certificate lifecycle automation against a target sy
 
 ### 3. Discovery — [`discovery/`](./discovery)
 
-**Base class:** `AbstractDiscoveryWorkflow` · **SDK:** `plugin-sdk:1.0-SNAPSHOT`
+**Base class:** `AbstractDiscoveryWorkflow` · **SDK:** `plugin-sdk:1.1`
 
 Demonstrates importing external data into your TLM inventory:
 

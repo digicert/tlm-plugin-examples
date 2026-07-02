@@ -46,7 +46,7 @@ The Test Discovery Plugin is designed to integrate with DigiCert's Trust Lifecyc
 
 ### Dependencies
 
-- DigiCert TLM Plugin SDK (`com.digicert.tlm:plugin-sdk:1.0-SNAPSHOT`)
+- DigiCert TLM Plugin SDK (`com.digicert.tlm:plugin-sdk:1.1`)
 - SLF4J for logging
 - Google Gson for JSON processing
 - Lombok for code generation
