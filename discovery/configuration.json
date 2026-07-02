@@ -1,0 +1,160 @@
+{
+  "metadata": {
+    "author": "John Doe",
+    "email": "John.Doe@digicert.com"
+  },
+  "core_settings": [
+    {
+      "name": "core_attributes.sensor_id",
+      "label": "Managing sensor",
+      "type": "select",
+      "editable": true,
+      "optional": false,
+      "size": "l",
+      "validation": [
+        {
+          "rule": "alphaNumericRule"
+        }
+      ],
+      "options_provider": "Sensors",
+      "required": true
+    }
+  ],
+  "config_settings": [
+    {
+      "name": "config_attributes.userName",
+      "label": "Username",
+      "type": "input",
+      "editable": true,
+      "optional": false,
+      "size": "l",
+      "validation": [
+        {
+          "rule": "requiredRule"
+        }
+      ],
+      "required": true
+    },
+    {
+      "name": "config_attributes.password",
+      "label": "Password",
+      "type": "password",
+      "editable": true,
+      "optional": false,
+      "size": "l",
+      "validation": [
+        {
+          "rule": "requiredRule"
+        }
+      ],
+      "required": true
+    }
+  ],
+  "additional_settings": [
+     {
+            "name": "additional_attributes.import_bu",
+            "label": "import_bu",
+            "label_helper": "import_bu",
+            "type": "select",
+            "optional": true,
+            "size": "l",
+            "options_provider": "BusinessUnits"
+        },
+        {
+            "name": "additional_attributes.certificate_assignment_rules",
+            "description": "certificate_assignment_rules",
+            "label": "certificate_assignment_rules",
+            "type": "select",
+            "optional": true,
+            "size": "l",
+            "options_provider": "Rules"
+        },
+        {
+            "name": "additional_attributes.schedule_import_frequency",
+            "label": "schedule_import_frequency",
+            "type": "multi_items_list",
+            "fields": [
+                {
+                    "id": null,
+                    "name": "additional_attributes.import_frequency_label",
+                    "label": "import_frequency_label",
+                    "description": null,
+                    "type": "text",
+                    "fields": null,
+                    "size": null,
+                    "label_helper": null,
+                    "editable": null,
+                    "value": "Every",
+                    "optional": null,
+                    "options_provider": null,
+                    "default_value": null,
+                    "validation": null,
+                    "options": null,
+                    "dirty_editable": null,
+                    "required": true
+                },
+                {
+                    "id": null,
+                    "name": "additional_attributes.import_frequency_value",
+                    "label": null,
+                    "description": null,
+                    "type": "input",
+                    "fields": null,
+                    "size": "s",
+                    "label_helper": null,
+                    "editable": true,
+                    "value": "15",
+                    "optional": null,
+                    "options_provider": null,
+                    "default_value": null,
+                    "validation": null,
+                    "options": null,
+                    "dirty_editable": null,
+                    "required": true
+                },
+                {
+                    "id": null,
+                    "name": "additional_attributes.import_frequency_unit",
+                    "label": null,
+                    "description": null,
+                    "type": "select",
+                    "fields": null,
+                    "size": "m",
+                    "label_helper": null,
+                    "editable": true,
+                    "value": "Minutes",
+                    "optional": null,
+                    "options_provider": null,
+                    "default_value": null,
+                    "validation": null,
+                    "options": [
+                        {
+                            "key": "Minutes",
+                            "value": "minutes"
+                        },
+                        {
+                            "key": "Hours",
+                            "value": "hours"
+                        },
+                        {
+                            "key": "Weeks",
+                            "value": "weeks"
+                        }
+                    ],
+                    "dirty_editable": null,
+                    "required": true
+                }
+            ]
+        }
+  ],
+  "credential_sets": [
+    {
+      "name": "sensitive",
+      "fields": [
+        {
+          "name": "config_attributes.password"
+        }
+      ]
+    }
+  ]
+}
