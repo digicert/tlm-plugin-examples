@@ -29,6 +29,8 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.jcajce.spec.MLDSAParameterSpec;
+import org.bouncycastle.jcajce.spec.SLHDSAParameterSpec;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
@@ -116,16 +118,26 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm, String dnsNames,
             String ipAddresses, String emails) {
         try {
-            // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
-            keyPairGenerator.initialize(keySize);
-            KeyPair keyPair = keyPairGenerator.generateKeyPair();
+            // Generate key pair – use PQC provider for PQC algorithms
+            KeyPair keyPair;
+            if (isPQCAlgorithm(keyAlgorithm)) {
+                keyPair = generatePQCKeyPair(keyAlgorithm);
+            } else {
+                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
+                keyPairGenerator.initialize(keySize);
+                keyPair = keyPairGenerator.generateKeyPair();
+            }
+
+            // For cross-family PQC requests, use a signer key from the requested
+            // signature algorithm family to avoid implicit provider fallback.
+            KeyPair signingKeyPair = keyPair;
+            if (isPQCAlgorithm(keyAlgorithm) && isPQCAlgorithm(signatureAlgorithm)
+                    && !getPQCKeyFamily(keyAlgorithm).equals(getPQCKeyFamily(signatureAlgorithm))) {
+                signingKeyPair = generatePQCKeyPair(signatureAlgorithm);
+            }
 
             // Build X500Name using Bouncy Castle's X500NameBuilder for proper escaping
             X500Name x500Name = buildX500Name(subjectDn);
-
-            // Build the signature algorithm string
-            String sigAlgName = buildSignatureAlgorithmName(signatureAlgorithm, keyAlgorithm);
 
             // Create CSR builder
             PKCS10CertificationRequestBuilder csrBuilder = new JcaPKCS10CertificationRequestBuilder(x500Name,
@@ -170,9 +182,18 @@ public class MyCertDeliveryPluginHelper {
             }
 
             // Create content signer
-            ContentSigner contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                    .setProvider("BC")
-                    .build(keyPair.getPrivate());
+            ContentSigner contentSigner;
+            if (isPQCAlgorithm(keyAlgorithm)) {
+                String pqcSigAlg = toPQCSignatureJcaName(signatureAlgorithm);
+                contentSigner = new JcaContentSignerBuilder(pqcSigAlg)
+                        .setProvider("BC")
+                        .build(signingKeyPair.getPrivate());
+            } else {
+                String sigAlgName = buildSignatureAlgorithmName(signatureAlgorithm, keyAlgorithm);
+                contentSigner = new JcaContentSignerBuilder(sigAlgName)
+                        .setProvider("BC")
+                        .build(keyPair.getPrivate());
+            }
 
             // Build CSR
             PKCS10CertificationRequest csr = csrBuilder.build(contentSigner);
@@ -186,6 +207,143 @@ public class MyCertDeliveryPluginHelper {
         } catch (Exception e) {
             throw new WorkflowExecutionException("Failed to generate CSR with SANs", e);
         }
+    }
+
+    /**
+     * Returns true if the given key algorithm is a supported PQC algorithm.
+     */
+    private static boolean isPQCAlgorithm(String keyAlgorithm) {
+        if (keyAlgorithm == null) {
+            return false;
+        }
+        String normalized = keyAlgorithm.trim().toUpperCase().replace("_", "-");
+        return normalized.startsWith("MLDSA-") || normalized.startsWith("ML-DSA-")
+                || normalized.startsWith("SLHDSA-") || normalized.startsWith("SLH-DSA-");
+    }
+
+    /**
+     * Generates a key pair for the given PQC algorithm using the BCPQC provider.
+     *
+     * Supported algorithms:
+     *   MLDSA-44, MLDSA-65, MLDSA-87
+     *   SLHDSA-SHA2-128f, SLHDSA-SHA2-128s,
+     *   SLHDSA-SHA2-192f, SLHDSA-SHA2-192s,
+     *   SLHDSA-SHA2-256f, SLHDSA-SHA2-256s
+     */
+    private static KeyPair generatePQCKeyPair(String algorithm) throws Exception {
+        String canonical = canonicalizePQCKeyAlgorithm(algorithm);
+        if (canonical.startsWith("ML-DSA-")) {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("ML-DSA", "BC");
+            keyGen.initialize(getMLDSAParameterSpec(canonical));
+            return keyGen.generateKeyPair();
+        } else if (canonical.startsWith("SLH-DSA-")) {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("SLH-DSA", "BC");
+            keyGen.initialize(getSLHDSAParameterSpec(canonical));
+            return keyGen.generateKeyPair();
+        }
+        throw new WorkflowExecutionException("Unsupported PQC algorithm: " + algorithm);
+    }
+
+    /**
+     * Maps a user-facing ML-DSA algorithm name to a BouncyCastle MLDSAParameterSpec.
+     */
+    private static MLDSAParameterSpec getMLDSAParameterSpec(String algorithm) {
+        return switch (canonicalizePQCKeyAlgorithm(algorithm)) {
+            case "ML-DSA-44" -> MLDSAParameterSpec.ml_dsa_44;
+            case "ML-DSA-65" -> MLDSAParameterSpec.ml_dsa_65;
+            case "ML-DSA-87" -> MLDSAParameterSpec.ml_dsa_87;
+            default -> throw new WorkflowExecutionException("Unsupported ML-DSA algorithm: " + algorithm);
+        };
+    }
+
+    /**
+     * Maps a user-facing SLH-DSA algorithm name to a BouncyCastle SLHDSAParameterSpec.
+     */
+    private static SLHDSAParameterSpec getSLHDSAParameterSpec(String algorithm) {
+        return switch (canonicalizePQCKeyAlgorithm(algorithm)) {
+            case "SLH-DSA-SHA2-128F" -> SLHDSAParameterSpec.slh_dsa_sha2_128f;
+            case "SLH-DSA-SHA2-128S" -> SLHDSAParameterSpec.slh_dsa_sha2_128s;
+            case "SLH-DSA-SHA2-192F" -> SLHDSAParameterSpec.slh_dsa_sha2_192f;
+            case "SLH-DSA-SHA2-192S" -> SLHDSAParameterSpec.slh_dsa_sha2_192s;
+            case "SLH-DSA-SHA2-256F" -> SLHDSAParameterSpec.slh_dsa_sha2_256f;
+            case "SLH-DSA-SHA2-256S" -> SLHDSAParameterSpec.slh_dsa_sha2_256s;
+            default -> throw new WorkflowExecutionException("Unsupported SLH-DSA algorithm: " + algorithm);
+        };
+    }
+
+
+    private static String toPQCSignatureJcaName(String signatureAlgorithm) {
+        String canonical = canonicalizePQCAlgorithm(signatureAlgorithm, "signature");
+
+        if (canonical.startsWith("ML-DSA-")) {
+            return canonical;
+        }
+        if (canonical.startsWith("SLH-DSA-SHA2-") && canonical.length() > 0) {
+            // JCA name expects the final strength suffix as lowercase (f/s).
+            int last = canonical.length() - 1;
+            return canonical.substring(0, last) + Character.toLowerCase(canonical.charAt(last));
+        }
+        throw new WorkflowExecutionException("Unsupported PQC signature algorithm: " + signatureAlgorithm);
+    }
+
+    private static String getPQCKeyFamily(String keyAlgorithm) {
+        String canonical = canonicalizePQCKeyAlgorithm(keyAlgorithm);
+        if (canonical.startsWith("ML-DSA-")) {
+            return "ML-DSA";
+        }
+        if (canonical.startsWith("SLH-DSA-")) {
+            return "SLH-DSA";
+        }
+        throw new WorkflowExecutionException("Cannot determine PQC key family for: " + keyAlgorithm);
+    }
+
+
+    private static String canonicalizePQCKeyAlgorithm(String algorithm) {
+        return canonicalizePQCAlgorithm(algorithm, "key");
+    }
+
+    private static String canonicalizePQCAlgorithm(String algorithm, String fieldName) {
+        if (algorithm == null || algorithm.trim().isEmpty()) {
+            throw new WorkflowExecutionException("PQC " + fieldName + " algorithm is required.");
+        }
+
+        String normalized = algorithm.trim().toUpperCase().replace("_", "-");
+        if (isValidMLDSAName(normalized)) {
+            return normalized.startsWith("MLDSA-")
+                    ? normalized.replaceFirst("^MLDSA-", "ML-DSA-")
+                    : normalized;
+        }
+        if (isValidSLHDSAName(normalized)) {
+            return normalized.startsWith("SLHDSA-")
+                    ? normalized.replaceFirst("^SLHDSA-", "SLH-DSA-")
+                    : normalized;
+        }
+
+        throw new WorkflowExecutionException("Unsupported PQC " + fieldName + " algorithm: " + algorithm);
+    }
+
+    private static boolean isValidMLDSAName(String normalized) {
+        return "MLDSA-44".equals(normalized)
+                || "MLDSA-65".equals(normalized)
+                || "MLDSA-87".equals(normalized)
+                || "ML-DSA-44".equals(normalized)
+                || "ML-DSA-65".equals(normalized)
+                || "ML-DSA-87".equals(normalized);
+    }
+
+    private static boolean isValidSLHDSAName(String normalized) {
+        return "SLHDSA-SHA2-128F".equals(normalized)
+                || "SLHDSA-SHA2-128S".equals(normalized)
+                || "SLHDSA-SHA2-192F".equals(normalized)
+                || "SLHDSA-SHA2-192S".equals(normalized)
+                || "SLHDSA-SHA2-256F".equals(normalized)
+                || "SLHDSA-SHA2-256S".equals(normalized)
+                || "SLH-DSA-SHA2-128F".equals(normalized)
+                || "SLH-DSA-SHA2-128S".equals(normalized)
+                || "SLH-DSA-SHA2-192F".equals(normalized)
+                || "SLH-DSA-SHA2-192S".equals(normalized)
+                || "SLH-DSA-SHA2-256F".equals(normalized)
+                || "SLH-DSA-SHA2-256S".equals(normalized);
     }
 
     /**
