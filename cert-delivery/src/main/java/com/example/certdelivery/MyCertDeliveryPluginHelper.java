@@ -96,7 +96,7 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm) {
         try {
             // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, BC_PROVIDER);
             keyPairGenerator.initialize(keySize);
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
@@ -261,12 +261,12 @@ public class MyCertDeliveryPluginHelper {
      */
     private static KeyPair generatePQCKeyPair(String algorithm) throws Exception {
         String canonical = canonicalizePQCAlgorithm(algorithm, "key");
-        if (canonical.startsWith("ML-DSA-")) {
-            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("ML-DSA", "BC");
+        if (canonical.startsWith(ML_DSA_PREFIX)) {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(ML_DSA_FAMILY, BC_PROVIDER);
             keyGen.initialize(getMLDSAParameterSpec(canonical));
             return keyGen.generateKeyPair();
-        } else if (canonical.startsWith("SLH-DSA-")) {
-            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("SLH-DSA", "BC");
+        } else if (canonical.startsWith(SLH_DSA_PREFIX)) {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(SLH_DSA_FAMILY, BC_PROVIDER);
             keyGen.initialize(getSLHDSAParameterSpec(canonical));
             return keyGen.generateKeyPair();
         }
@@ -304,10 +304,10 @@ public class MyCertDeliveryPluginHelper {
     private static String toPQCSignatureJcaName(String signatureAlgorithm) {
         String canonical = canonicalizePQCAlgorithm(signatureAlgorithm, "signature");
 
-        if (canonical.startsWith("ML-DSA-")) {
+        if (canonical.startsWith(ML_DSA_PREFIX)) {
             return canonical;
         }
-        if (canonical.startsWith("SLH-DSA-SHA2-") && canonical.length() > 0) {
+        if (canonical.startsWith(SLH_DSA_PREFIX) && canonical.length() > 0) {
             // JCA name expects the final strength suffix as lowercase (f/s).
             int last = canonical.length() - 1;
             return canonical.substring(0, last) + Character.toLowerCase(canonical.charAt(last));
