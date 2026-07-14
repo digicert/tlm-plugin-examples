@@ -251,7 +251,7 @@ public class MyCertDeliveryPluginHelper {
     }
 
     /**
-     * Generates a key pair for the given PQC algorithm using the BCPQC provider.
+     * Generates a key pair for the given PQC algorithm using the BC provider.
      *
      * Supported algorithms:
      *   MLDSA-44, MLDSA-65, MLDSA-87
