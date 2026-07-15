@@ -29,6 +29,8 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.jcajce.spec.MLDSAParameterSpec;
+import org.bouncycastle.jcajce.spec.SLHDSAParameterSpec;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
@@ -42,6 +44,38 @@ import com.digicert.tlm.utils.DownloadCertificateUtil;
 import com.digicert.tlm.workflows.WorkflowExecutionException;
 
 public class MyCertDeliveryPluginHelper {
+
+    // Constants
+    private static final String BC_PROVIDER = "BC";
+    private static final String NULL_SEPARATOR = "\u0000";
+    private static final String CERT_FILE_EXTENSION = ".cer";
+    private static final String ICA_CERT_SUFFIX = "_ica.cer";
+    private static final String P7B_FILE_EXTENSION = ".p7b";
+    private static final String DEFAULT_DOWNLOAD_FILENAME = "certificate.zip";
+
+    // PQC Algorithm families
+    private static final String ML_DSA_FAMILY = "ML-DSA";
+    private static final String SLH_DSA_FAMILY = "SLH-DSA";
+    private static final String MLDSA_PREFIX = "MLDSA-";
+    private static final String ML_DSA_PREFIX = "ML-DSA-";
+    private static final String SLHDSA_PREFIX = "SLHDSA-";
+    private static final String SLH_DSA_PREFIX = "SLH-DSA-";
+
+    // Key algorithms
+    private static final String RSA_ALGORITHM = "RSA";
+    private static final String EC_ALGORITHM = "EC";
+    private static final String ECDSA_ALGORITHM = "ECDSA";
+    private static final String DSA_ALGORITHM = "DSA";
+
+    // Hash algorithm markers
+    private static final String SHA_UPPER = "SHA";
+    private static final String SHA_LOWER = "sha";
+
+    // Signature algorithm suffixes
+    private static final String WITH_RSA = "withRSA";
+    private static final String WITH_ECDSA = "withECDSA";
+    private static final String WITH_DSA = "withDSA";
+    private static final String WITH = "with";
 
     static {
         Security.addProvider(new BouncyCastleProvider());
@@ -62,7 +96,7 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm) {
         try {
             // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, BC_PROVIDER);
             keyPairGenerator.initialize(keySize);
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
@@ -78,7 +112,7 @@ public class MyCertDeliveryPluginHelper {
 
             // Create content signer
             ContentSigner contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                    .setProvider("BC")
+                    .setProvider(BC_PROVIDER)
                     .build(keyPair.getPrivate());
 
             // Build CSR
@@ -116,16 +150,23 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm, String dnsNames,
             String ipAddresses, String emails) {
         try {
-            // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
-            keyPairGenerator.initialize(keySize);
-            KeyPair keyPair = keyPairGenerator.generateKeyPair();
+            // Generate key pair – use PQC provider for PQC algorithms
+            KeyPair keyPair;
+            if (isPQCAlgorithm(keyAlgorithm)) {
+                keyPair = generatePQCKeyPair(keyAlgorithm);
+            } else {
+                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, BC_PROVIDER);
+                keyPairGenerator.initialize(keySize);
+                keyPair = keyPairGenerator.generateKeyPair();
+            }
+            KeyPair signingKeyPair = keyPair;
+            if (isPQCAlgorithm(keyAlgorithm) && isPQCAlgorithm(signatureAlgorithm)
+                    && !getPQCKeyFamily(keyAlgorithm).equals(getPQCKeyFamily(signatureAlgorithm))) {
+                signingKeyPair = generatePQCKeyPair(signatureAlgorithm);
+            }
 
             // Build X500Name using Bouncy Castle's X500NameBuilder for proper escaping
             X500Name x500Name = buildX500Name(subjectDn);
-
-            // Build the signature algorithm string
-            String sigAlgName = buildSignatureAlgorithmName(signatureAlgorithm, keyAlgorithm);
 
             // Create CSR builder
             PKCS10CertificationRequestBuilder csrBuilder = new JcaPKCS10CertificationRequestBuilder(x500Name,
@@ -170,9 +211,18 @@ public class MyCertDeliveryPluginHelper {
             }
 
             // Create content signer
-            ContentSigner contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                    .setProvider("BC")
-                    .build(keyPair.getPrivate());
+            ContentSigner contentSigner;
+            if (isPQCAlgorithm(keyAlgorithm)) {
+                String pqcSigAlg = toPQCSignatureJcaName(signatureAlgorithm);
+                contentSigner = new JcaContentSignerBuilder(pqcSigAlg)
+                        .setProvider(BC_PROVIDER)
+                        .build(signingKeyPair.getPrivate());
+            } else {
+                String sigAlgName = buildSignatureAlgorithmName(signatureAlgorithm, keyAlgorithm);
+                contentSigner = new JcaContentSignerBuilder(sigAlgName)
+                        .setProvider(BC_PROVIDER)
+                        .build(keyPair.getPrivate());
+            }
 
             // Build CSR
             PKCS10CertificationRequest csr = csrBuilder.build(contentSigner);
@@ -186,6 +236,138 @@ public class MyCertDeliveryPluginHelper {
         } catch (Exception e) {
             throw new WorkflowExecutionException("Failed to generate CSR with SANs", e);
         }
+    }
+
+    /**
+     * Returns true if the given key algorithm is a supported PQC algorithm.
+     */
+    private static boolean isPQCAlgorithm(String keyAlgorithm) {
+        if (keyAlgorithm == null) {
+            return false;
+        }
+        String normalized = keyAlgorithm.trim().toUpperCase().replace("_", "-");
+        return normalized.startsWith(MLDSA_PREFIX) || normalized.startsWith(ML_DSA_PREFIX)
+                || normalized.startsWith(SLHDSA_PREFIX) || normalized.startsWith(SLH_DSA_PREFIX);
+    }
+
+    /**
+     * Generates a key pair for the given PQC algorithm using the BC provider.
+     *
+     * Supported algorithms:
+     *   MLDSA-44, MLDSA-65, MLDSA-87
+     *   SLHDSA-SHA2-128f, SLHDSA-SHA2-128s,
+     *   SLHDSA-SHA2-192f, SLHDSA-SHA2-192s,
+     *   SLHDSA-SHA2-256f, SLHDSA-SHA2-256s
+     */
+    private static KeyPair generatePQCKeyPair(String algorithm) throws Exception {
+        String canonical = canonicalizePQCAlgorithm(algorithm, "key");
+        if (canonical.startsWith(ML_DSA_PREFIX)) {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(ML_DSA_FAMILY, BC_PROVIDER);
+            keyGen.initialize(getMLDSAParameterSpec(canonical));
+            return keyGen.generateKeyPair();
+        } else if (canonical.startsWith(SLH_DSA_PREFIX)) {
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(SLH_DSA_FAMILY, BC_PROVIDER);
+            keyGen.initialize(getSLHDSAParameterSpec(canonical));
+            return keyGen.generateKeyPair();
+        }
+        throw new WorkflowExecutionException("Unsupported PQC algorithm: " + algorithm);
+    }
+
+    /**
+     * Maps a user-facing ML-DSA algorithm name to a BouncyCastle MLDSAParameterSpec.
+     */
+    private static MLDSAParameterSpec getMLDSAParameterSpec(String algorithm) {
+        return switch (algorithm) {
+            case "ML-DSA-44" -> MLDSAParameterSpec.ml_dsa_44;
+            case "ML-DSA-65" -> MLDSAParameterSpec.ml_dsa_65;
+            case "ML-DSA-87" -> MLDSAParameterSpec.ml_dsa_87;
+            default -> throw new WorkflowExecutionException("Unsupported ML-DSA algorithm: " + algorithm);
+        };
+    }
+
+    /**
+     * Maps a user-facing SLH-DSA algorithm name to a BouncyCastle SLHDSAParameterSpec.
+     */
+    private static SLHDSAParameterSpec getSLHDSAParameterSpec(String algorithm) {
+        return switch (algorithm) {
+            case "SLH-DSA-SHA2-128F" -> SLHDSAParameterSpec.slh_dsa_sha2_128f;
+            case "SLH-DSA-SHA2-128S" -> SLHDSAParameterSpec.slh_dsa_sha2_128s;
+            case "SLH-DSA-SHA2-192F" -> SLHDSAParameterSpec.slh_dsa_sha2_192f;
+            case "SLH-DSA-SHA2-192S" -> SLHDSAParameterSpec.slh_dsa_sha2_192s;
+            case "SLH-DSA-SHA2-256F" -> SLHDSAParameterSpec.slh_dsa_sha2_256f;
+            case "SLH-DSA-SHA2-256S" -> SLHDSAParameterSpec.slh_dsa_sha2_256s;
+            default -> throw new WorkflowExecutionException("Unsupported SLH-DSA algorithm: " + algorithm);
+        };
+    }
+
+
+    private static String toPQCSignatureJcaName(String signatureAlgorithm) {
+        String canonical = canonicalizePQCAlgorithm(signatureAlgorithm, "signature");
+
+        if (canonical.startsWith(ML_DSA_PREFIX)) {
+            return canonical;
+        }
+        if (canonical.startsWith(SLH_DSA_PREFIX) && canonical.length() > 0) {
+            // JCA name expects the final strength suffix as lowercase (f/s).
+            int last = canonical.length() - 1;
+            return canonical.substring(0, last) + Character.toLowerCase(canonical.charAt(last));
+        }
+        throw new WorkflowExecutionException("Unsupported PQC signature algorithm: " + signatureAlgorithm);
+    }
+
+    private static String getPQCKeyFamily(String keyAlgorithm) {
+        String canonical = canonicalizePQCAlgorithm(keyAlgorithm, "key");
+        if (canonical.startsWith(ML_DSA_PREFIX)) {
+            return ML_DSA_FAMILY;
+        }
+        if (canonical.startsWith(SLH_DSA_PREFIX)) {
+            return SLH_DSA_FAMILY;
+        }
+        throw new WorkflowExecutionException("Cannot determine PQC key family for: " + keyAlgorithm);
+    }
+
+    private static String canonicalizePQCAlgorithm(String algorithm, String fieldName) {
+        if (algorithm == null || algorithm.trim().isEmpty()) {
+            throw new WorkflowExecutionException("PQC " + fieldName + " algorithm is required.");
+        }
+
+        String normalized = algorithm.trim().toUpperCase().replace("_", "-");
+        if (isValidMLDSAName(normalized)) {
+            return normalized.startsWith(MLDSA_PREFIX)
+                    ? normalized.replaceFirst("^MLDSA-", ML_DSA_PREFIX)
+                    : normalized;
+        }
+        if (isValidSLHDSAName(normalized)) {
+            return normalized.startsWith(SLHDSA_PREFIX)
+                    ? normalized.replaceFirst("^SLHDSA-", SLH_DSA_PREFIX)
+                    : normalized;
+        }
+
+        throw new WorkflowExecutionException("Unsupported PQC " + fieldName + " algorithm: " + algorithm);
+    }
+
+    private static boolean isValidMLDSAName(String normalized) {
+        return "MLDSA-44".equals(normalized)
+                || "MLDSA-65".equals(normalized)
+                || "MLDSA-87".equals(normalized)
+                || "ML-DSA-44".equals(normalized)
+                || "ML-DSA-65".equals(normalized)
+                || "ML-DSA-87".equals(normalized);
+    }
+
+    private static boolean isValidSLHDSAName(String normalized) {
+        return "SLHDSA-SHA2-128F".equals(normalized)
+                || "SLHDSA-SHA2-128S".equals(normalized)
+                || "SLHDSA-SHA2-192F".equals(normalized)
+                || "SLHDSA-SHA2-192S".equals(normalized)
+                || "SLHDSA-SHA2-256F".equals(normalized)
+                || "SLHDSA-SHA2-256S".equals(normalized)
+                || "SLH-DSA-SHA2-128F".equals(normalized)
+                || "SLH-DSA-SHA2-128S".equals(normalized)
+                || "SLH-DSA-SHA2-192F".equals(normalized)
+                || "SLH-DSA-SHA2-192S".equals(normalized)
+                || "SLH-DSA-SHA2-256F".equals(normalized)
+                || "SLH-DSA-SHA2-256S".equals(normalized);
     }
 
     /**
@@ -206,7 +388,7 @@ public class MyCertDeliveryPluginHelper {
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
 
         // Split by null character (the field separator)
-        String[] parts = subjectDn.split("\u0000");
+        String[] parts = subjectDn.split(NULL_SEPARATOR);
 
         for (String part : parts) {
             String trimmedPart = part.trim();
@@ -253,18 +435,18 @@ public class MyCertDeliveryPluginHelper {
      */
     private static String buildSignatureAlgorithmName(String signatureAlgorithm, String keyAlgorithm) {
         String hashAlg = signatureAlgorithm.toUpperCase();
-        if (!hashAlg.startsWith("SHA")) {
-            hashAlg = hashAlg.replace("sha", "SHA");
+        if (!hashAlg.startsWith(SHA_UPPER)) {
+            hashAlg = hashAlg.replace(SHA_LOWER, SHA_UPPER);
         }
 
-        if ("RSA".equalsIgnoreCase(keyAlgorithm)) {
-            return hashAlg + "withRSA";
-        } else if ("EC".equalsIgnoreCase(keyAlgorithm) || "ECDSA".equalsIgnoreCase(keyAlgorithm)) {
-            return hashAlg + "withECDSA";
-        } else if ("DSA".equalsIgnoreCase(keyAlgorithm)) {
-            return hashAlg + "withDSA";
+        if (RSA_ALGORITHM.equalsIgnoreCase(keyAlgorithm)) {
+            return hashAlg + WITH_RSA;
+        } else if (EC_ALGORITHM.equalsIgnoreCase(keyAlgorithm) || ECDSA_ALGORITHM.equalsIgnoreCase(keyAlgorithm)) {
+            return hashAlg + WITH_ECDSA;
+        } else if (DSA_ALGORITHM.equalsIgnoreCase(keyAlgorithm)) {
+            return hashAlg + WITH_DSA;
         }
-        return hashAlg + "with" + keyAlgorithm;
+        return hashAlg + WITH + keyAlgorithm;
     }
 
     /**
@@ -288,7 +470,7 @@ public class MyCertDeliveryPluginHelper {
      */
     public static Path downloadFileToDirectory(String fileUrl, String directory) throws IOException {
         URL url = new URL(fileUrl);
-        String fileName = "certificate.zip";
+        String fileName = DEFAULT_DOWNLOAD_FILENAME;
         Path targetPath = Path.of(directory, fileName);
         Files.createDirectories(Path.of(directory));
         try (InputStream in = url.openStream()) {
@@ -312,7 +494,7 @@ public class MyCertDeliveryPluginHelper {
             while ((entry = zis.getNextEntry()) != null) {
                 String name = entry.getName();
                 // Match .cer files but skip _ica.cer and .p7b files
-                if (name.endsWith(".cer") && !name.endsWith("_ica.cer")) {
+                if (name.endsWith(CERT_FILE_EXTENSION) && !name.endsWith(ICA_CERT_SUFFIX)) {
                     // Read the .cer file contents
                     StringBuilder sb = new StringBuilder();
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(zis))) {
@@ -342,7 +524,7 @@ public class MyCertDeliveryPluginHelper {
             while ((entry = zis.getNextEntry()) != null) {
                 String name = entry.getName();
                 // Match _ica.cer files
-                if (name.endsWith("_ica.cer")) {
+                if (name.endsWith(ICA_CERT_SUFFIX)) {
                     // Read the _ica.cer file contents
                     StringBuilder sb = new StringBuilder();
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(zis))) {
@@ -375,15 +557,15 @@ public class MyCertDeliveryPluginHelper {
             while ((entry = zis.getNextEntry()) != null) {
                 String name = entry.getName();
 
-                if (name.endsWith(".p7b")) {
+                if (name.endsWith(P7B_FILE_EXTENSION)) {
                     // Skip .p7b files
                     continue;
                 }
 
-                if (name.endsWith("_ica.cer")) {
+                if (name.endsWith(ICA_CERT_SUFFIX)) {
                     // ICA certificate
                     icaCert = readZipEntryContent(zis);
-                } else if (name.endsWith(".cer")) {
+                } else if (name.endsWith(CERT_FILE_EXTENSION)) {
                     // End-entity certificate
                     endEntityCert = readZipEntryContent(zis);
                 }
