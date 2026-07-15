@@ -96,7 +96,7 @@ The plugin is packaged as a fat JAR, distributed as a ZIP archive, and executed 
 
 - **Java 17** or later
 - **Maven 3.6+** (or use the included Maven wrapper `./mvnw` / `mvnw.cmd`)
-- **GitHub Personal Access Token** with `read:packages` scope (to access TLM Plugin SDK from GitHub Packages)
+- Internet access to `https://digicert.github.io/tlm-plugins-sdk-dist` (the public SDK repository — no authentication required)
 
 ## Project Structure
 
@@ -138,35 +138,11 @@ git clone https://github.com/digicert/tlm-plugin-example-certdelivery.git
 cd tlm-plugin-example-certdelivery
 ```
 
-### Configure GitHub Token
+### Get the SDK
 
-The TLM Plugin SDK is hosted on GitHub Packages. You need a Personal Access Token (PAT) to download it.
-
-1. **Create a GitHub Personal Access Token:**
-   - Go to [GitHub Settings > Tokens](https://github.com/settings/tokens)
-   - Click "Generate new token (classic)"
-   - Select the `read:packages` scope
-   - Copy the generated token
-
-2. **Set Environment Variables:**
-
-   **Windows (PowerShell):**
-   ```powershell
-   $env:GITHUB_ACTOR = "your-github-username"
-   $env:GITHUB_TOKEN = "your-personal-access-token"
-   ```
-
-   **Windows (Command Prompt):**
-   ```cmd
-   set GITHUB_ACTOR=your-github-username
-   set GITHUB_TOKEN=your-personal-access-token
-   ```
-
-   **Linux/macOS:**
-   ```bash
-   export GITHUB_ACTOR="your-github-username"
-   export GITHUB_TOKEN="your-personal-access-token"
-   ```
+The TLM Plugin SDK is hosted on a public GitHub Pages Maven repository at
+`https://digicert.github.io/tlm-plugins-sdk-dist`. **No authentication is required** — the included
+`settings.xml` already points Maven at this repository, so there is nothing to configure.
 
 ### Build the Plugin
 
@@ -176,7 +152,7 @@ chmod +x build.sh
 ./build.sh
 ```
 
-The build script validates your GitHub token permissions before building and generates SHA-256 checksums in `plugin-dist/checksums` after a successful build.
+The build script runs the Maven build and generates SHA-256 checksums in `plugin-dist/checksums` after a successful build.
 
 **Using Maven directly (Windows):**
 ```powershell
@@ -777,15 +753,9 @@ echo '{"action":"generateCsr","data":{"subjectDn":"CN=test.com","keyAlgorithm":"
 ### Build Failures
 
 **Error: "Could not resolve dependencies"**
-- Ensure `GITHUB_TOKEN` and `GITHUB_ACTOR` environment variables are set
-- Verify your token has `read:packages` scope
-- Check if the token hasn't expired
-- Confirm the SDK repository URL in `settings.xml` is correct: `https://maven.pkg.github.com/digicert/tlm-plugins-sdk-dist`
-
-**Error: "Invalid or expired GitHub token"**
-- Generate a new Personal Access Token at https://github.com/settings/tokens
-- Update the `GITHUB_TOKEN` environment variable
-- The `build.sh` script automatically validates token permissions before building
+- Confirm the SDK repository URL in `settings.xml` is correct: `https://digicert.github.io/tlm-plugins-sdk-dist`
+- Ensure the build passes `-s settings.xml` so Maven uses the bundled repository configuration
+- Check network connectivity to `https://digicert.github.io` (no authentication is required)
 
 ### Runtime Issues
 

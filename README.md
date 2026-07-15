@@ -156,30 +156,15 @@ reference, and release notes.
 
 - **Java 17** or later
 - **Maven 3.6+** (each project also ships the Maven wrapper where applicable — `./mvnw` / `mvnw.cmd`)
-- A **GitHub Personal Access Token** with the `read:packages` scope, to download the SDK from
-  GitHub Packages
 
-## Getting the SDK (GitHub Packages Auth)
+## Getting the SDK
 
-The SDK is served from GitHub Packages, so Maven must authenticate. Each project includes a
-`settings.xml` that points at `https://maven.pkg.github.com/digicert/tlm-plugins-sdk-dist` and reads
-your credentials from environment variables:
+The SDK is served from a public GitHub Pages Maven repository at
+`https://digicert.github.io/tlm-plugins-sdk-dist`, so **no authentication is required**. Each project
+includes a `settings.xml` that already points Maven at this repository — nothing else to configure.
 
-**Linux/macOS**
-```bash
-export GITHUB_ACTOR="your-github-username"
-export GITHUB_TOKEN="your-personal-access-token"   # needs read:packages scope
-```
-
-**Windows (PowerShell)**
-```powershell
-$env:GITHUB_ACTOR = "your-github-username"
-$env:GITHUB_TOKEN = "your-personal-access-token"
-```
-
-> Generate a token at **GitHub → Settings → Developer settings → Personal access tokens** with the
-> `read:packages` scope. See [tlm-plugins-sdk-dist](https://github.com/digicert/tlm-plugins-sdk-dist)
-> for the authoritative SDK access instructions.
+> See [tlm-plugins-sdk-dist](https://github.com/digicert/tlm-plugins-sdk-dist) for the authoritative
+> SDK versions and release notes.
 
 ## Quick Start
 
@@ -188,11 +173,7 @@ $env:GITHUB_TOKEN = "your-personal-access-token"
 git clone https://github.com/digicert/tlm-plugin-examples.git
 cd tlm-plugin-examples
 
-# 2. Authenticate to GitHub Packages (see above)
-export GITHUB_ACTOR="your-github-username"
-export GITHUB_TOKEN="your-personal-access-token"
-
-# 3. Build the example you care about (e.g. cert-delivery)
+# 2. Build the example you care about (e.g. cert-delivery)
 cd cert-delivery
 mvn clean package -s settings.xml -U
 ```
