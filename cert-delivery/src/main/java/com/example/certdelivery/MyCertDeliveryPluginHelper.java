@@ -13,6 +13,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.security.Security;
+import java.security.spec.AlgorithmParameterSpec;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,9 +30,6 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.jcajce.spec.MLDSAParameterSpec;
-import org.bouncycastle.jcajce.spec.SLHDSAParameterSpec;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
@@ -40,13 +38,13 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 
+import com.digicert.tlm.crypto.CryptoPolicy;
 import com.digicert.tlm.utils.DownloadCertificateUtil;
 import com.digicert.tlm.workflows.WorkflowExecutionException;
 
 public class MyCertDeliveryPluginHelper {
 
     // Constants
-    private static final String BC_PROVIDER = "BC";
     private static final String NULL_SEPARATOR = "\u0000";
     private static final String CERT_FILE_EXTENSION = ".cer";
     private static final String ICA_CERT_SUFFIX = "_ica.cer";
@@ -78,7 +76,7 @@ public class MyCertDeliveryPluginHelper {
     private static final String WITH = "with";
 
     static {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(CryptoPolicy.get().provider());
     }
 
     /**
@@ -96,7 +94,7 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm) {
         try {
             // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, BC_PROVIDER);
+            KeyPairGenerator keyPairGenerator = CryptoPolicy.get().keyPairGenerator(keyAlgorithm);
             keyPairGenerator.initialize(keySize);
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
@@ -112,7 +110,7 @@ public class MyCertDeliveryPluginHelper {
 
             // Create content signer
             ContentSigner contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                    .setProvider(BC_PROVIDER)
+                    .setProvider(CryptoPolicy.get().provider())
                     .build(keyPair.getPrivate());
 
             // Build CSR
@@ -150,12 +148,12 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm, String dnsNames,
             String ipAddresses, String emails) {
         try {
-            // Generate key pair – use PQC provider for PQC algorithms
+            // Generate key pair – use PQC key generation for PQC algorithms
             KeyPair keyPair;
             if (isPQCAlgorithm(keyAlgorithm)) {
                 keyPair = generatePQCKeyPair(keyAlgorithm);
             } else {
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, BC_PROVIDER);
+                KeyPairGenerator keyPairGenerator = CryptoPolicy.get().keyPairGenerator(keyAlgorithm);
                 keyPairGenerator.initialize(keySize);
                 keyPair = keyPairGenerator.generateKeyPair();
             }
@@ -215,12 +213,12 @@ public class MyCertDeliveryPluginHelper {
             if (isPQCAlgorithm(keyAlgorithm)) {
                 String pqcSigAlg = toPQCSignatureJcaName(signatureAlgorithm);
                 contentSigner = new JcaContentSignerBuilder(pqcSigAlg)
-                        .setProvider(BC_PROVIDER)
+                        .setProvider(CryptoPolicy.get().provider())
                         .build(signingKeyPair.getPrivate());
             } else {
                 String sigAlgName = buildSignatureAlgorithmName(signatureAlgorithm, keyAlgorithm);
                 contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                        .setProvider(BC_PROVIDER)
+                        .setProvider(CryptoPolicy.get().provider())
                         .build(keyPair.getPrivate());
             }
 
@@ -262,11 +260,11 @@ public class MyCertDeliveryPluginHelper {
     private static KeyPair generatePQCKeyPair(String algorithm) throws Exception {
         String canonical = canonicalizePQCAlgorithm(algorithm, "key");
         if (canonical.startsWith(ML_DSA_PREFIX)) {
-            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(ML_DSA_FAMILY, BC_PROVIDER);
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(ML_DSA_FAMILY, CryptoPolicy.get().provider());
             keyGen.initialize(getMLDSAParameterSpec(canonical));
             return keyGen.generateKeyPair();
         } else if (canonical.startsWith(SLH_DSA_PREFIX)) {
-            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(SLH_DSA_FAMILY, BC_PROVIDER);
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance(SLH_DSA_FAMILY, CryptoPolicy.get().provider());
             keyGen.initialize(getSLHDSAParameterSpec(canonical));
             return keyGen.generateKeyPair();
         }
@@ -276,28 +274,44 @@ public class MyCertDeliveryPluginHelper {
     /**
      * Maps a user-facing ML-DSA algorithm name to a BouncyCastle MLDSAParameterSpec.
      */
-    private static MLDSAParameterSpec getMLDSAParameterSpec(String algorithm) {
-        return switch (algorithm) {
-            case "ML-DSA-44" -> MLDSAParameterSpec.ml_dsa_44;
-            case "ML-DSA-65" -> MLDSAParameterSpec.ml_dsa_65;
-            case "ML-DSA-87" -> MLDSAParameterSpec.ml_dsa_87;
+    private static AlgorithmParameterSpec getMLDSAParameterSpec(String algorithm) {
+        String field = switch (algorithm) {
+            case "ML-DSA-44" -> "ml_dsa_44";
+            case "ML-DSA-65" -> "ml_dsa_65";
+            case "ML-DSA-87" -> "ml_dsa_87";
             default -> throw new WorkflowExecutionException("Unsupported ML-DSA algorithm: " + algorithm);
         };
+        return pqcParameterSpec("org.bouncycastle.jcajce.spec.MLDSAParameterSpec", field);
     }
 
     /**
      * Maps a user-facing SLH-DSA algorithm name to a BouncyCastle SLHDSAParameterSpec.
      */
-    private static SLHDSAParameterSpec getSLHDSAParameterSpec(String algorithm) {
-        return switch (algorithm) {
-            case "SLH-DSA-SHA2-128F" -> SLHDSAParameterSpec.slh_dsa_sha2_128f;
-            case "SLH-DSA-SHA2-128S" -> SLHDSAParameterSpec.slh_dsa_sha2_128s;
-            case "SLH-DSA-SHA2-192F" -> SLHDSAParameterSpec.slh_dsa_sha2_192f;
-            case "SLH-DSA-SHA2-192S" -> SLHDSAParameterSpec.slh_dsa_sha2_192s;
-            case "SLH-DSA-SHA2-256F" -> SLHDSAParameterSpec.slh_dsa_sha2_256f;
-            case "SLH-DSA-SHA2-256S" -> SLHDSAParameterSpec.slh_dsa_sha2_256s;
+    private static AlgorithmParameterSpec getSLHDSAParameterSpec(String algorithm) {
+        String field = switch (algorithm) {
+            case "SLH-DSA-SHA2-128F" -> "slh_dsa_sha2_128f";
+            case "SLH-DSA-SHA2-128S" -> "slh_dsa_sha2_128s";
+            case "SLH-DSA-SHA2-192F" -> "slh_dsa_sha2_192f";
+            case "SLH-DSA-SHA2-192S" -> "slh_dsa_sha2_192s";
+            case "SLH-DSA-SHA2-256F" -> "slh_dsa_sha2_256f";
+            case "SLH-DSA-SHA2-256S" -> "slh_dsa_sha2_256s";
             default -> throw new WorkflowExecutionException("Unsupported SLH-DSA algorithm: " + algorithm);
         };
+        return pqcParameterSpec("org.bouncycastle.jcajce.spec.SLHDSAParameterSpec", field);
+    }
+
+    /**
+     * Resolves a BouncyCastle PQC parameter spec constant reflectively. The spec classes live only
+     * in the standard BouncyCastle module (bcprov), not in bc-fips, so the FIPS stream compiles
+     * without them; a PQC request under FIPS fails here at runtime rather than at build time.
+     */
+    private static AlgorithmParameterSpec pqcParameterSpec(String className, String field) {
+        try {
+            return (AlgorithmParameterSpec) Class.forName(className).getField(field).get(null);
+        } catch (ReflectiveOperationException e) {
+            throw new WorkflowExecutionException(
+                    "PQC parameter spec unavailable in the active BouncyCastle module: " + className + "#" + field, e);
+        }
     }
 
 

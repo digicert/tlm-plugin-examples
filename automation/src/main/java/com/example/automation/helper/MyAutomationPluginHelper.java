@@ -21,11 +21,11 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-import javax.security.auth.x500.X500Principal;
-
 import org.apache.commons.lang3.tuple.Pair;
 import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
@@ -33,8 +33,8 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.bouncycastle.util.io.pem.PemObject;
 import org.bouncycastle.util.io.pem.PemWriter;
-import org.bouncycastle.x509.X509V3CertificateGenerator;
 
+import com.digicert.tlm.crypto.CryptoPolicy;
 import com.digicert.tlm.workflows.automation.dto.RefreshConfigurationResponse;
 import com.example.automation.extended.response.MyRefreshResponse;
 
@@ -47,7 +47,7 @@ import lombok.experimental.UtilityClass;
 public class MyAutomationPluginHelper {
 
     static {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(CryptoPolicy.get().provider());
     }
 
     /**
@@ -58,7 +58,7 @@ public class MyAutomationPluginHelper {
      */
     public static Pair<String, String> generateCSR(String subjectDn, String keyType, Integer keySize,
                                                    String signatureAlgo) throws Exception {
-        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyType);
+        KeyPairGenerator keyPairGenerator = CryptoPolicy.get().keyPairGenerator(keyType);
         keyPairGenerator.initialize(keySize);
         KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
@@ -69,7 +69,7 @@ public class MyAutomationPluginHelper {
         if ("sha256".equalsIgnoreCase(signatureAlgo)) {
             signatureAlgo = "SHA256withRSA";
         }
-        ContentSigner signer = new JcaContentSignerBuilder(signatureAlgo).setProvider("BC").build(keyPair.getPrivate());
+        ContentSigner signer = new JcaContentSignerBuilder(signatureAlgo).setProvider(CryptoPolicy.get().provider()).build(keyPair.getPrivate());
 
         PKCS10CertificationRequest csr = requestBuilder.build(signer);
 
@@ -95,26 +95,25 @@ public class MyAutomationPluginHelper {
      * @throws Exception if an error occurs during certificate generation
      */
     public static String generateSelfSignedCertificate() throws Exception {
-        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+        KeyPairGenerator keyPairGenerator = CryptoPolicy.get().keyPairGenerator("RSA");
         keyPairGenerator.initialize(2048);
         KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
         X500Name issuer = new X500Name("CN=example.com,O=Example Corp,L=San Francisco,ST=CA,C=US");
         X500Name subject = issuer; // Self-signed
-        BigInteger serial = BigInteger.valueOf(System.currentTimeMillis());
+        BigInteger serial = new BigInteger(160, CryptoPolicy.get().secureRandom());
         Date notBefore = new Date();
         Date notAfter = Date.from(LocalDateTime.now().plusYears(1).atZone(ZoneId.systemDefault()).toInstant());
 
-        X509V3CertificateGenerator certGenerator = new X509V3CertificateGenerator();
-        certGenerator.setSerialNumber(serial);
-        certGenerator.setIssuerDN(new X500Principal(issuer.toString()));
-        certGenerator.setSubjectDN(new X500Principal(subject.toString()));
-        certGenerator.setNotBefore(notBefore);
-        certGenerator.setNotAfter(notAfter);
-        certGenerator.setPublicKey(keyPair.getPublic());
-        certGenerator.setSignatureAlgorithm("SHA256withRSA");
-
-        X509Certificate certificate = certGenerator.generateX509Certificate(keyPair.getPrivate(), "BC");
+        JcaX509v3CertificateBuilder certBuilder =
+            new JcaX509v3CertificateBuilder(issuer, serial, notBefore, notAfter, subject, keyPair.getPublic());
+        ContentSigner certSigner = new JcaContentSignerBuilder("SHA256withRSA")
+            .setProvider(CryptoPolicy.get().provider())
+            .build(keyPair.getPrivate());
+        X509CertificateHolder certHolder = certBuilder.build(certSigner);
+        X509Certificate certificate = new JcaX509CertificateConverter()
+            .setProvider(CryptoPolicy.get().provider())
+            .getCertificate(certHolder);
 
         StringWriter stringWriter = new StringWriter();
         try (PemWriter pemWriter = new PemWriter(stringWriter)) {
