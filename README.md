@@ -28,6 +28,7 @@ and packages into a distributable ZIP that can be uploaded to a TLM tenant and e
 - [Repository Layout](#repository-layout)
 - [Common Concepts Across All Plugins](#common-concepts-across-all-plugins)
 - [Building & Packaging](#building--packaging)
+- [FIPS-Compliant Builds](#fips-compliant-builds)
 - [Deploying to TLM](#deploying-to-tlm)
 - [Support & Resources](#support--resources)
 - [License](#license)
@@ -74,7 +75,7 @@ defined by its SDK base class.
 
 ### 1. Certificate Delivery — [`cert-delivery/`](./cert-delivery)
 
-**Base class:** `AbstractCertificateDeliveryWorkflow` · **SDK:** `plugin-sdk:1.1`
+**Base class:** `AbstractCertificateDeliveryWorkflow` · **SDK:** `plugin-sdk:1.2`
 
 Demonstrates a full certificate delivery flow driven by **Admin Web Requests (AWR)**:
 
@@ -93,7 +94,7 @@ to pass profile‑specific data into a plugin, start here.
 
 ### 2. Automation — [`automation/`](./automation)
 
-**Base class:** `AbstractAutomationWorkflow` · **SDK:** `plugin-sdk:1.1`
+**Base class:** `AbstractAutomationWorkflow` · **SDK:** `plugin-sdk:1.2`
 
 Demonstrates end‑to‑end certificate lifecycle automation against a target system:
 
@@ -107,7 +108,7 @@ Demonstrates end‑to‑end certificate lifecycle automation against a target sy
 
 ### 3. Discovery — [`discovery/`](./discovery)
 
-**Base class:** `AbstractDiscoveryWorkflow` · **SDK:** `plugin-sdk:1.1`
+**Base class:** `AbstractDiscoveryWorkflow` · **SDK:** `plugin-sdk:1.2`
 
 Demonstrates importing external data into your TLM inventory:
 
@@ -245,6 +246,69 @@ Output artifacts:
 - `target/<artifact>-<version>.jar` — the fat JAR (all dependencies bundled)
 - `plugin-dist/<artifact>-<version>.zip` — the distributable package for upload to TLM
 - `plugin-dist/checksums` — SHA‑256 checksums for verification
+
+## FIPS-Compliant Builds
+
+The crypto‑bearing plugins — **automation** and **cert-delivery** — build in **two streams from the same
+source**:
+
+| Stream | How to build | BouncyCastle module | Use when |
+| --- | --- | --- | --- |
+| **non‑fips** (default) | `mvn clean package -s settings.xml` | standard `bcprov-jdk18on` | no FIPS requirement |
+| **fips** | `mvn clean package -s settings.xml -Pfips` | FIPS‑validated `bc-fips` (CMVP), approved‑only mode | FIPS 140‑3 cryptography is required |
+
+> **discovery** performs no cryptography, so it has no FIPS variant — build it normally.
+
+### How it works
+
+All cryptography routes through the SDK's `CryptoPolicy` (shipped in **`plugin-sdk:1.2`**), so the plugin
+source holds no hardcoded provider names. At runtime `CryptoPolicy`:
+
+- selects the BouncyCastle provider present on the classpath (standard vs `bc-fips`),
+- enables `bc-fips` **approved‑only mode** and fails closed if it is not confirmed, and
+- pins the authorized **CMVP module version**, refusing to run a mismatched module.
+
+The `fips` Maven profile then:
+
+1. swaps the BouncyCastle dependency to `bc-fips` / `bcpkix-fips`;
+2. fills the `@TLM_FIPS_ENV@` placeholder in `plugin-meta.json` with the FIPS runtime environment
+   (`TLM_FIPS_APPROVED_ONLY=true`, `TLM_FIPS_CMVP_VERSION=<version>`) — the Sensor sets these when it
+   launches the plugin; and
+3. ships the FIPS module **intact** under `lib/` (see *Packaging* below).
+
+### Verifying a FIPS build
+
+```bash
+cd cert-delivery            # or automation
+mvn clean package -s settings.xml -Pfips
+
+# plugin-meta.json carries the FIPS env — only in the fips build
+unzip -p plugin-dist/*.zip plugin-meta.json | grep TLM_FIPS
+
+# the fat JAR must contain NO unpacked BouncyCastle classes...
+unzip -l target/*.jar | grep org/bouncycastle        # expect: none
+# ...the FIPS module ships intact alongside it instead
+unzip -l plugin-dist/*.zip | grep 'lib/bc-fips'       # expect: lib/bc-fips-<ver>.jar
+```
+
+### Packaging: why the FIPS module rides in `lib/`
+
+The `java -jar <plugin>.jar` launch is **unchanged**. However, `bc-fips` runs a load‑time **integrity
+self‑test over its own jar**, which fails (`Module checksum failed`) if the jar is repackaged
+(unpacked/shaded) into the fat JAR. So the fips build keeps `bc-fips`, `bcpkix-fips`, and `bcutil-fips`
+as **unmodified jars under `lib/`** and references them from the fat JAR's manifest `Class-Path`. The
+non‑fips build stays a single all‑in‑one fat JAR.
+
+### CI
+
+The root workflow [`.github/workflows/build-plugins.yml`](./.github/workflows/build-plugins.yml) builds
+**both** streams for every plugin on each PR and asserts the FIPS env gating and fat‑JAR purity.
+
+### Post‑quantum (PQC) note
+
+`cert-delivery` supports ML‑DSA / SLH‑DSA (FIPS 204/205) CSR generation, but **only in the non‑fips
+stream** — the current `bc-fips` release does not yet expose these algorithms. A PQC request under the
+fips stream fails at runtime; RSA and EC are fully supported in both streams.
 
 ## Deploying to TLM
 
