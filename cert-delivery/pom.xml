@@ -10,12 +10,30 @@
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+
+        <!-- BouncyCastle coordinates default to the standard (non-FIPS) modules.
+             The `fips` profile below swaps them for the FIPS-validated modules and
+             fills fips.env.entries so plugin-meta.json advertises FIPS approved-only mode. -->
+        <bc.prov.groupId>org.bouncycastle</bc.prov.groupId>
+        <bc.prov.artifactId>bcprov-jdk18on</bc.prov.artifactId>
+        <bc.prov.version>1.79</bc.prov.version>
+        <bc.pkix.groupId>org.bouncycastle</bc.pkix.groupId>
+        <bc.pkix.artifactId>bcpkix-jdk18on</bc.pkix.artifactId>
+        <bc.pkix.version>1.79</bc.pkix.version>
+        <fips.env.entries></fips.env.entries>
+
+        <!-- Assembly descriptor selection + fat-jar manifest Class-Path. Defaults produce a
+             single all-in-one fat-jar; the `fips` profile swaps to descriptors that keep the
+             BouncyCastle FIPS module intact under lib/ and reference it here. -->
+        <fatjar.descriptor>plugin-fat-jar.xml</fatjar.descriptor>
+        <zip.descriptor>zip.xml</zip.descriptor>
+        <plugin.classpath></plugin.classpath>
     </properties>
     <dependencies>
         <dependency>
             <groupId>com.digicert.tlm</groupId>
             <artifactId>plugin-sdk</artifactId>
-            <version>1.1</version>
+            <version>1.2</version>
         </dependency>
 
         <!-- Lombok -->
@@ -38,14 +56,14 @@
             <version>2.8.9</version>
         </dependency>
         <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk18on</artifactId>
-            <version>1.79</version>
+            <groupId>${bc.prov.groupId}</groupId>
+            <artifactId>${bc.prov.artifactId}</artifactId>
+            <version>${bc.prov.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk18on</artifactId>
-            <version>1.79</version>
+            <groupId>${bc.pkix.groupId}</groupId>
+            <artifactId>${bc.pkix.artifactId}</artifactId>
+            <version>${bc.pkix.version}</version>
         </dependency>
         <!-- Apache Commons Lang3 for Pair -->
         <dependency>
@@ -79,6 +97,10 @@
                             <token>\$\{project\.version\}</token>
                             <value>${project.version}</value>
                         </replacement>
+                        <replacement>
+                            <token>"@TLM_FIPS_ENV@",</token>
+                            <value>${fips.env.entries}</value>
+                        </replacement>
                     </replacements>
                 </configuration>
             </plugin>
@@ -97,7 +119,7 @@
                         <configuration>
                             <appendAssemblyId>false</appendAssemblyId>
                             <descriptors>
-                                <descriptor>${project.basedir}/plugin-fat-jar.xml</descriptor>
+                                <descriptor>${project.basedir}/${fatjar.descriptor}</descriptor>
                             </descriptors>
                             <archive>
                                 <manifest>
@@ -105,6 +127,9 @@
                                         com.example.certdelivery.MyCertDeliveryPluginRunner
                                     </mainClass>
                                 </manifest>
+                                <manifestEntries>
+                                    <Class-Path>${plugin.classpath}</Class-Path>
+                                </manifestEntries>
                             </archive>
                             <finalName>${project.artifactId}-${project.version}</finalName>
                         </configuration>
@@ -117,7 +142,7 @@
                         </goals>
                         <configuration>
                             <descriptors>
-                                <descriptor>${project.basedir}/zip.xml</descriptor>
+                                <descriptor>${project.basedir}/${zip.descriptor}</descriptor>
                             </descriptors>
                             <appendAssemblyId>false</appendAssemblyId>
                             <ignoreMissingDescriptor>true</ignoreMissingDescriptor>
@@ -128,4 +153,35 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <!-- FIPS stream: bundle the FIPS-validated BouncyCastle modules instead of the
+             standard ones, and inject the FIPS runtime env into plugin-meta.json so the
+             SDK CryptoPolicy runs the provider in approved-only mode. Build with `-Pfips`. -->
+        <profile>
+            <id>fips</id>
+            <properties>
+                <bc.prov.groupId>org.bouncycastle</bc.prov.groupId>
+                <bc.prov.artifactId>bc-fips</bc.prov.artifactId>
+                <bc.prov.version>2.1.3</bc.prov.version>
+                <bc.pkix.groupId>org.bouncycastle</bc.pkix.groupId>
+                <bc.pkix.artifactId>bcpkix-fips</bc.pkix.artifactId>
+                <bc.pkix.version>2.1.12</bc.pkix.version>
+                <fips.env.entries>"TLM_FIPS_APPROVED_ONLY=true","TLM_FIPS_CMVP_VERSION=${bc.prov.version}",</fips.env.entries>
+
+                <bc.util.version>2.1.7</bc.util.version>
+                <fatjar.descriptor>plugin-fat-jar-fips.xml</fatjar.descriptor>
+                <zip.descriptor>zip-fips.xml</zip.descriptor>
+                <plugin.classpath>lib/bc-fips-${bc.prov.version}.jar lib/bcpkix-fips-${bc.pkix.version}.jar lib/bcutil-fips-${bc.util.version}.jar</plugin.classpath>
+            </properties>
+            <dependencies>
+                <!-- Pin the transitive bcutil-fips version so the fat-jar manifest Class-Path
+                     filename above is deterministic. -->
+                <dependency>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcutil-fips</artifactId>
+                    <version>${bc.util.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

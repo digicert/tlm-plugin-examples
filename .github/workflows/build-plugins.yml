@@ -1,0 +1,76 @@
+name: Build plugins (non-fips + fips)
+
+# Builds every example plugin in its non-fips stream, and the crypto plugins
+# (automation, cert-delivery) additionally in their fips stream, on PRs that touch
+# a plugin or this workflow, and on manual dispatch. Asserts that the FIPS runtime
+# env lands in plugin-meta.json only for the fips build, and that the fips fat-jar
+# keeps the BouncyCastle FIPS module intact under lib/ (never unpacked). Publishes
+# nothing.
+
+on:
+  pull_request:
+    paths:
+      - 'automation/**'
+      - 'cert-delivery/**'
+      - 'discovery/**'
+      - '.github/workflows/build-plugins.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.project }} (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: automation,    variant: non-fips }
+          - { project: automation,    variant: fips }
+          - { project: cert-delivery, variant: non-fips }
+          - { project: cert-delivery, variant: fips }
+          - { project: discovery,     variant: non-fips }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build ${{ matrix.project }} (${{ matrix.variant }})
+        working-directory: ${{ github.workspace }}/${{ matrix.project }}
+        run: |
+          set -euo pipefail
+
+          profile_args=()
+          if [ "${{ matrix.variant }}" = "fips" ]; then
+            profile_args+=("-Pfips")
+          fi
+
+          mvn -B -s settings.xml "${profile_args[@]}" clean package -DskipTests --no-transfer-progress
+
+          meta="target/classes/plugin-meta.json"
+          fatjar="$(ls target/*.jar | grep -v original | head -1)"
+
+          if [ "${{ matrix.variant }}" = "fips" ]; then
+            grep -q 'TLM_FIPS_APPROVED_ONLY=true' "$meta" \
+              || { echo "::error::fips plugin-meta.json missing TLM_FIPS_APPROVED_ONLY"; exit 1; }
+            # The FIPS module must ship intact under lib/, never unpacked into the fat-jar,
+            # or its integrity self-test fails at runtime.
+            if unzip -l "$fatjar" | grep -q 'org/bouncycastle'; then
+              echo "::error::fips fat-jar contains unpacked BouncyCastle classes"; exit 1
+            fi
+            unzip -l plugin-dist/*.zip | grep -q 'lib/bc-fips' \
+              || { echo "::error::fips zip missing intact lib/bc-fips module"; exit 1; }
+          else
+            if grep -q 'TLM_FIPS' "$meta"; then
+              echo "::error::non-fips plugin-meta.json leaked FIPS env"; exit 1
+            fi
+          fi
+
+          echo "OK: ${{ matrix.project }} (${{ matrix.variant }}) built and asserted."

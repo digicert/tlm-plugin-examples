@@ -29,7 +29,6 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
@@ -38,13 +37,14 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 
+import com.digicert.tlm.crypto.CryptoPolicy;
 import com.digicert.tlm.utils.DownloadCertificateUtil;
 import com.digicert.tlm.workflows.WorkflowExecutionException;
 
 public class MyCertDeliveryPluginHelper {
 
     static {
-        Security.addProvider(new BouncyCastleProvider());
+        Security.addProvider(CryptoPolicy.get().provider());
     }
 
     /**
@@ -62,7 +62,7 @@ public class MyCertDeliveryPluginHelper {
             String signatureAlgorithm) {
         try {
             // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
+            KeyPairGenerator keyPairGenerator = CryptoPolicy.get().keyPairGenerator(keyAlgorithm);
             keyPairGenerator.initialize(keySize);
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
@@ -78,7 +78,7 @@ public class MyCertDeliveryPluginHelper {
 
             // Create content signer
             ContentSigner contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                    .setProvider("BC")
+                    .setProvider(CryptoPolicy.get().provider())
                     .build(keyPair.getPrivate());
 
             // Build CSR
@@ -117,7 +117,7 @@ public class MyCertDeliveryPluginHelper {
             String ipAddresses, String emails) {
         try {
             // Generate key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(keyAlgorithm, "BC");
+            KeyPairGenerator keyPairGenerator = CryptoPolicy.get().keyPairGenerator(keyAlgorithm);
             keyPairGenerator.initialize(keySize);
             KeyPair keyPair = keyPairGenerator.generateKeyPair();
 
@@ -171,7 +171,7 @@ public class MyCertDeliveryPluginHelper {
 
             // Create content signer
             ContentSigner contentSigner = new JcaContentSignerBuilder(sigAlgName)
-                    .setProvider("BC")
+                    .setProvider(CryptoPolicy.get().provider())
                     .build(keyPair.getPrivate());
 
             // Build CSR
